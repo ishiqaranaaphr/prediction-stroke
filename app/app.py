@@ -1,88 +1,78 @@
-# app/app.py
 import streamlit as st
 import pandas as pd
 import joblib
-import numpy as np
-import json
-from pathlib import Path
 
-# --- config ---
-MODEL_PATH = Path(__file__).parent / 'model' / 'stroke_pipeline.joblib'
-METADATA_PATH = Path(__file__).parent / 'model' / 'artifacts_metadata.json'
+# ===============================
+# 1. LOAD PIPELINE
+# ===============================
+MODEL_PATH = "stroke_pipeline.pkl"
 
-st.set_page_config(page_title='Stroke Prediction', layout='centered')
-
-st.title('Prediksi Risiko Penyakit Stroke (Logistic Regression)')
-st.write('Catatan: ini hanya model pembelajaran — bukan diagnosis medis.')
-
-# Load model
 @st.cache_resource
 def load_pipeline(path):
     return joblib.load(path)
 
 pipeline = load_pipeline(MODEL_PATH)
 
-# Load metadata
-with open(METADATA_PATH,'r') as f:
-    metadata = json.load(f)
+# ===============================
+# 2. STREAMLIT UI
+# ===============================
+st.set_page_config(page_title="Prediksi Penyakit Stroke", page_icon="🧠", layout="centered")
 
-# Build input form
-with st.form('input_form'):
-    st.header('Masukkan data pasien')
+st.title("🧠 Prediksi Penyakit Stroke")
+st.markdown("""
+Aplikasi ini menggunakan **Logistic Regression** untuk memprediksi kemungkinan seseorang terkena stroke.
+Silakan masukkan data pasien di bawah ini.
+""")
 
-    # Numeric inputs
-    numeric_inputs = {}
-    for n in metadata['numeric_features']:
-        # inference default values from metadata not provided here -> use placeholder
-        if n == 'age':
-            val = st.number_input('Age', min_value=0.0, max_value=120.0, value=50.0)
-        elif n == 'avg_glucose_level':
-            val = st.number_input('Average Glucose Level', value=100.0)
-        elif n == 'bmi':
-            val = st.number_input('BMI', value=25.0)
-        else:
-            val = st.number_input(n, value=0.0)
-        numeric_inputs[n] = val
+# ===============================
+# 3. INPUT USER
+# ===============================
+gender = st.selectbox("Jenis Kelamin", ["Male", "Female"])
+age = st.slider("Umur", 0, 100, 25)
+hypertension = st.selectbox("Hipertensi", [0, 1], help="0 = Tidak, 1 = Ya")
+heart_disease = st.selectbox("Penyakit Jantung", [0, 1], help="0 = Tidak, 1 = Ya")
+ever_married = st.selectbox("Pernah Menikah", ["Yes", "No"])
+work_type = st.selectbox("Jenis Pekerjaan", ["Private", "Self-employed", "Govt_job", "children", "Never_worked"])
+Residence_type = st.selectbox("Tipe Tempat Tinggal", ["Urban", "Rural"])
+avg_glucose_level = st.number_input("Rata-rata Glukosa", min_value=0.0, value=100.0)
+bmi = st.number_input("BMI", min_value=0.0, value=25.0)
+smoking_status = st.selectbox("Status Merokok", ["formerly smoked", "never smoked", "smokes", "Unknown"])
 
-    # Categorical inputs: show options from metadata
-    categorical_inputs = {}
-    for c, vals in metadata['categorical_features'].items():
-        # Show selectbox with str options
-        choice = st.selectbox(c, options=[str(x) for x in vals])
-        categorical_inputs[c] = choice
+# Buat dataframe dari input user
+input_data = pd.DataFrame([{
+    "gender": gender,
+    "age": age,
+    "hypertension": hypertension,
+    "heart_disease": heart_disease,
+    "ever_married": ever_married,
+    "work_type": work_type,
+    "Residence_type": Residence_type,
+    "avg_glucose_level": avg_glucose_level,
+    "bmi": bmi,
+    "smoking_status": smoking_status
+}])
 
-    submitted = st.form_submit_button('Prediksi')
-
-if submitted:
-    # build DataFrame in same column order as training X
-    input_df = pd.DataFrame([ {**numeric_inputs, **categorical_inputs} ])
-
-    # Model pipeline handles preprocessing; just pass the raw input
-    prob = pipeline.predict_proba(input_df)[0][1]
-    label = int(pipeline.predict(input_df)[0])
-
-    st.subheader('Hasil Prediksi')
-    st.write('Probabilitas terindikasi stroke: **{:.3f}**'.format(prob))
-    st.write('Prediksi label: **{}**'.format('Terindikasi Stroke' if label==1 else 'Tidak Terindikasi Stroke'))
-
-    # Simple explanation using coefficients (if logistic) — attempt to show top positive contributors
+# ===============================
+# 4. PREDIKSI
+# ===============================
+if st.button("🔍 Prediksi Stroke"):
     try:
-        classifier = pipeline.named_steps['classifier']
-        preproc = pipeline.named_steps['preprocessor']
-        # get feature names after preprocessing
-        ohe = preproc.named_transformers_['cat'].named_steps['onehot']
-        cat_cols = preproc.transformers_[1][2]
-        ohe_names = list(ohe.get_feature_names_out(cat_cols))
-        feat_names = preproc.transformers_[0][2] + ohe_names
-        coefs = classifier.coef_[0]
-        feat_imp = pd.DataFrame({'feature':feat_names,'coef':coefs})
-        feat_imp = feat_imp.reindex(feat_imp.coef.abs().sort_values(ascending=False).index)
-        st.write('Top fitur berpengaruh (koefisien):')
-        st.write(feat_imp.head(8))
-    except Exception as e:
-        # ignore if structure different
-        st.write('Ringkasan fitur tidak tersedia (error: {})'.format(e))
+        prediction = pipeline.predict(input_data)[0]
+        prob = pipeline.predict_proba(input_data)[0][1]
 
-# Footer
-st.markdown('---')
-st.caption('Model dibuat & disimpan di Google Colab; aplikasi memuat pipeline joblib yang berisi preprocessing + model.')
+        if prediction == 1:
+            st.error(f"⚠️ Pasien **berisiko Stroke** dengan probabilitas {prob:.2%}")
+        else:
+            st.success(f"✅ Pasien **tidak berisiko Stroke** dengan probabilitas {1-prob:.2%}")
+
+        st.write("### Detail Probabilitas")
+        st.progress(float(prob))
+
+    except Exception as e:
+        st.exception(f"Terjadi error saat prediksi: {e}")
+
+# ===============================
+# 5. FOOTER
+# ===============================
+st.markdown("---")
+st.caption("Dibuat dengan ❤️ menggunakan Streamlit & Logistic Regression")
